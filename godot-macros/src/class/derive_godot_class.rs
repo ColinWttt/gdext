@@ -12,7 +12,10 @@ use crate::class::{
     make_property_impl, make_virtual_callback, BeforeKind, Field, FieldDefault, FieldExport,
     FieldVar, Fields, SignatureInfo,
 };
-use crate::util::{bail, error, ident, path_ends_with_complex, require_api_version, KvParser};
+use crate::util::{
+    bail, error, format_funcs_collection_struct, ident, path_ends_with_complex,
+    require_api_version, KvParser,
+};
 use crate::{handle_mutually_exclusive_keys, util, ParseResult};
 
 pub fn derive_godot_class(item: venial::Item) -> ParseResult<TokenStream> {
@@ -134,6 +137,14 @@ pub fn derive_godot_class(item: venial::Item) -> ParseResult<TokenStream> {
         modifiers.push(quote! { with_tool })
     }
 
+    // Declares a "funcs collection" struct that, for holds a constant for each #[func].
+    // That constant maps the Rust name (constant ident) to the Godot registered name (string value).
+    let funcs_collection_struct_name = format_funcs_collection_struct(class_name);
+    let funcs_collection_struct = quote! {
+        #[doc(hidden)]
+        pub struct #funcs_collection_struct_name {}
+    };
+
     Ok(quote! {
         impl ::godot::obj::GodotClass for #class_name {
             type Base = #base_class;
@@ -157,6 +168,7 @@ pub fn derive_godot_class(item: venial::Item) -> ParseResult<TokenStream> {
             type Exportable = <<Self as ::godot::obj::GodotClass>::Base as ::godot::obj::Bounds>::Exportable;
         }
 
+        #funcs_collection_struct
         #godot_init_impl
         #godot_withbase_impl
         #godot_exports_impl
@@ -279,7 +291,8 @@ fn make_user_class_impl(
         let tool_check = util::make_virtual_tool_check();
         let signature_info = SignatureInfo::fn_ready();
 
-        let callback = make_virtual_callback(class_name, &signature_info, BeforeKind::OnlyBefore);
+        let callback =
+            make_virtual_callback(class_name, &signature_info, BeforeKind::OnlyBefore, None);
 
         // See also __virtual_call() codegen.
         // This doesn't explicitly check if the base class inherits from Node (and thus has `_ready`), but the derive-macro already does
