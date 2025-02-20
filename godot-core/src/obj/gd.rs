@@ -428,10 +428,13 @@ impl<T: GodotClass> Gd<T> {
         Derived: Inherits<T>,
     {
         self.owned_cast().unwrap_or_else(|from_obj| {
+            let caller = std::panic::Location::caller();
             panic!(
-                "downcast from {from} to {to} failed; instance {from_obj:?}",
+                "downcast from {from} to {to} failed; instance {from_obj:?}.Error occured in {file}:{line}",
                 from = T::class_name(),
                 to = Derived::class_name(),
+                file=caller.file(),
+                line=caller.line()
             )
         })
     }
