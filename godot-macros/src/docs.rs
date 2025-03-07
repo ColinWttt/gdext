@@ -113,14 +113,10 @@ fn siphon_docs_from_attributes(doc: &[Attribute]) -> impl Iterator<Item = String
             _ => None,
         })
         .flat_map(|doc| {
-            doc.iter().map(|x| {
-                x.to_string()
-                    .trim_start_matches('r')
-                    .trim_start_matches('#')
-                    .trim_start_matches('"')
-                    .trim_end_matches('#')
-                    .trim_end_matches('"')
-                    .to_string()
+            doc.iter().map(|token_tree| {
+                let str = token_tree.to_string();
+                litrs::StringLit::parse(str.clone())
+                    .map_or(str, |parsed| parsed.value().to_string())
             })
         })
 }
@@ -254,7 +250,7 @@ pub fn make_method_docs(method: &FuncDefinition) -> Option<String> {
     let name = method
         .registered_name
         .clone()
-        .unwrap_or_else(|| method.signature_info.method_name.to_string());
+        .unwrap_or_else(|| method.rust_ident().to_string());
     let ret = method.signature_info.ret_type.to_token_stream().to_string();
     let params = params(
         method

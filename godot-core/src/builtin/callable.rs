@@ -64,18 +64,36 @@ impl Callable {
         }
     }
 
+    /// Create a callable for a method on any [`Variant`].
+    ///
+    /// Allows to dynamically call methods on builtin types (e.g. `String.md5_text`). Note that Godot method names are used, not Rust ones.
+    /// If the variant type is `Object`, the behavior will match that of `from_object_method()`.
+    ///
+    /// If the builtin type does not have the method, the returned callable will be invalid.
+    ///
+    /// Static builtin methods (e.g. `String.humanize_size`) are not supported in reflection as of Godot 4.4. For static _class_ functions,
+    /// use [`from_local_static()`][Self::from_local_static] instead.
+    ///
+    /// _Godot equivalent: `Callable.create(Variant variant, StringName method)`_
+    #[cfg(since_api = "4.3")]
+    pub fn from_variant_method<S>(variant: &Variant, method_name: S) -> Self
+    where
+        S: meta::AsArg<StringName>,
+    {
+        meta::arg_into_ref!(method_name);
+        inner::InnerCallable::create(variant, method_name)
+    }
+
     /// Create a callable for the static method `class_name::function` (single-threaded).
     ///
     /// Allows you to call static functions through `Callable`.
     ///
-    /// Note that due to varying support across different engine versions, the resulting `Callable` has unspecified behavior for
-    /// methods such as [`method_name()`][Self::method_name], [`object()`][Self::object], [`object_id()`][Self::object_id] or
-    /// [`get_argument_count()`][Self::arg_len] among others. It is recommended to only use this for calling the function.
+    /// Does not support built-in types (such as `String`), only classes.
     ///
     /// # Compatibility
-    /// Up until and including Godot 4.3, this method has some limitations:
-    /// - [`is_valid()`][Self::is_valid] will return `false`, even though the call itself succeeds.
-    /// - You cannot use statics to connect signals to such callables. Use the new typed signal API instead.
+    /// Not available before Godot 4.4. Library versions <0.3 used to provide this, however the polyfill used to emulate it was half-broken
+    /// (not supporting signals, bind(), method_name(), is_valid(), etc).
+    #[cfg(since_api = "4.4")]
     pub fn from_local_static(
         class_name: impl meta::AsArg<StringName>,
         function_name: impl meta::AsArg<StringName>,
@@ -83,39 +101,18 @@ impl Callable {
         meta::arg_into_owned!(class_name);
         meta::arg_into_owned!(function_name);
 
-        // Modern implementation: use ClassDb::class_call_static().
-        #[cfg(since_api = "4.4")]
-        {
-            let callable_name = format!("{class_name}.{function_name}");
+        let callable_name = format!("{class_name}.{function_name}");
 
-            Self::from_local_fn(&callable_name, move |args| {
-                let args = args.iter().cloned().cloned().collect::<Vec<_>>();
+        Self::from_local_fn(&callable_name, move |args| {
+            let args = args.iter().cloned().cloned().collect::<Vec<_>>();
 
-                let result: Variant = classes::ClassDb::singleton().class_call_static(
-                    &class_name,
-                    &function_name,
-                    args.as_slice(),
-                );
-                Ok(result)
-            })
-        }
-
-        // Polyfill for <= Godot 4.3: use GDScript expressions.
-        #[cfg(before_api = "4.4")]
-        {
-            use crate::obj::NewGd;
-
-            let code = format!(
-                "static func __callable():\n\treturn Callable({class_name}, \"{function_name}\")"
+            let result: Variant = classes::ClassDb::singleton().class_call_static(
+                &class_name,
+                &function_name,
+                args.as_slice(),
             );
-
-            let mut script = classes::GDScript::new_gd();
-            script.set_source_code(&code);
-            script.reload();
-
-            let callable = script.call("__callable", &[]);
-            callable.to()
-        }
+            Ok(result)
+        })
     }
 
     #[cfg(since_api = "4.2")]
@@ -125,7 +122,7 @@ impl Callable {
             token: ptr::null_mut(),
             object_id: 0,
             call_func: None,
-            is_valid_func: None, // could be customized, but no real use case yet.
+            is_valid_func: None, // overwritten later.
             free_func: None,
             hash_func: None,
             equal_func: None,
@@ -156,6 +153,24 @@ impl Callable {
             name,
             thread_id: Some(std::thread::current().id()),
         })
+    }
+
+    #[cfg(since_api = "4.2")]
+    pub(crate) fn with_scoped_fn<S, F, Fc, R>(name: S, rust_function: F, callable_usage: Fc) -> R
+    where
+        S: meta::AsArg<GString>,
+        F: FnMut(&[&Variant]) -> Result<Variant, ()>,
+        Fc: FnOnce(&Callable) -> R,
+    {
+        meta::arg_into_owned!(name);
+
+        let callable = Self::from_fn_wrapper(FnWrapper {
+            rust_function,
+            name,
+            thread_id: Some(std::thread::current().id()),
+        });
+
+        callable_usage(&callable)
     }
 
     /// Create callable from **thread-safe** Rust function or closure.
@@ -219,12 +234,14 @@ impl Callable {
         let userdata = CallableUserdata { inner: callable };
 
         let info = CallableCustomInfo {
+            // We could technically associate an object_id with the custom callable. is_valid_func would then check that for validity.
             callable_userdata: Box::into_raw(Box::new(userdata)) as *mut std::ffi::c_void,
             call_func: Some(rust_callable_call_custom::<C>),
             free_func: Some(rust_callable_destroy::<C>),
             hash_func: Some(rust_callable_hash::<C>),
             equal_func: Some(rust_callable_equal::<C>),
             to_string_func: Some(rust_callable_to_string_display::<C>),
+            is_valid_func: Some(rust_callable_is_valid_custom::<C>),
             ..Self::default_callable_custom_info()
         };
 
@@ -243,6 +260,7 @@ impl Callable {
             call_func: Some(rust_callable_call_fn::<F>),
             free_func: Some(rust_callable_destroy::<FnWrapper<F>>),
             to_string_func: Some(rust_callable_to_string_named::<F>),
+            is_valid_func: Some(rust_callable_is_valid),
             ..Self::default_callable_custom_info()
         };
 
@@ -530,6 +548,17 @@ mod custom_callable {
         /// Error handling is mostly needed in case argument number or types mismatch.
         #[allow(clippy::result_unit_err)] // TODO remove once there's a clear error type here.
         fn invoke(&mut self, args: &[&Variant]) -> Result<Variant, ()>;
+
+        // TODO(v0.3): add object_id().
+
+        /// Returns whether the callable is considered valid.
+        ///
+        /// True by default.
+        ///
+        /// If this Callable stores an object, this method should return whether that object is alive.
+        fn is_valid(&self) -> bool {
+            true
+        }
     }
 
     pub unsafe extern "C" fn rust_callable_call_custom<C: RustCallable>(
@@ -640,5 +669,24 @@ mod custom_callable {
 
         w.name.clone().move_into_string_ptr(r_out);
         *r_is_valid = sys::conv::SYS_TRUE;
+    }
+
+    // Implementing this is necessary because the default (nullptr) may consider custom callables as invalid in some cases.
+    pub unsafe extern "C" fn rust_callable_is_valid_custom<C: RustCallable>(
+        callable_userdata: *mut std::ffi::c_void,
+    ) -> sys::GDExtensionBool {
+        let w: &mut C = CallableUserdata::inner_from_raw(callable_userdata);
+        let valid = w.is_valid();
+
+        sys::conv::bool_to_sys(valid)
+    }
+
+    // Implementing this is necessary because the default (nullptr) may consider custom callables as invalid in some cases.
+    pub unsafe extern "C" fn rust_callable_is_valid(
+        _callable_userdata: *mut std::ffi::c_void,
+    ) -> sys::GDExtensionBool {
+        // If we had an object (CallableCustomInfo::object_id field), we could check whether that object is alive.
+        // But since we just take a Rust function/closure, not knowing what happens inside, we assume always valid.
+        sys::conv::SYS_TRUE
     }
 }

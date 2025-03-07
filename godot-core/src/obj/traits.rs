@@ -261,8 +261,8 @@ pub trait IndexEnum: EngineEnum {
 // Possible alternative for builder APIs, although even less ergonomic: Base<T> could be Base<T, Self> and return Gd<Self>.
 #[diagnostic::on_unimplemented(
     message = "Class `{Self}` requires a `Base<T>` field",
-    label = "missing field `_base: Base<...>`",
-    note = "A base field is required to access the base from within `self`, for script-virtual functions or #[rpc] methods",
+    label = "missing field `_base: Base<...>` in struct declaration",
+    note = "A base field is required to access the base from within `self`, as well as for #[signal], #[rpc] and #[func(virtual)]",
     note = "see also: https://godot-rust.github.io/book/register/classes.html#the-base-field"
 )]
 pub trait WithBaseField: GodotClass + Bounds<Declarer = bounds::DeclUser> {
@@ -428,6 +428,40 @@ pub trait WithBaseField: GodotClass + Bounds<Declarer = bounds::DeclUser> {
     }
 }
 
+pub trait WithSignals: WithBaseField {
+    type SignalCollection<'a>;
+
+    /// Access user-defined signals of the current object `self`.
+    ///
+    /// For classes that have at least one `#[signal]` defined, returns a collection of signal names. Each returned signal has a specialized
+    /// API for connecting and emitting signals in a type-safe way. If you need to access signals from outside (given a `Gd` pointer), use
+    /// [`Gd::signals()`] instead.
+    ///
+    /// If you haven't already, read the [book chapter about signals](https://godot-rust.github.io/book/register/signals.html) for a
+    /// walkthrough.
+    ///
+    /// # Provided API
+    ///
+    /// The returned collection provides a method for each signal, with the same name as the corresponding `#[signal]`.  \
+    /// For example, if you have...
+    /// ```ignore
+    /// #[signal]
+    /// fn damage_taken(&mut self, amount: i32);
+    /// ```
+    /// ...then you can access the signal as `self.signals().damage_taken()`, which returns an object with the following API:
+    ///
+    /// | Method signature | Description |
+    /// |------------------|-------------|
+    /// | `connect(f: impl FnMut(i32))` | Connects global or associated function, or a closure. |
+    /// | `connect_self(f: impl FnMut(&mut Self, i32))` | Connects a `&mut self` method or closure. |
+    /// | `emit(amount: i32)` | Emits the signal with the given arguments. |
+    ///
+    fn signals(&mut self) -> Self::SignalCollection<'_>;
+
+    #[doc(hidden)]
+    fn __signals_from_external(external: &Gd<Self>) -> Self::SignalCollection<'_>;
+}
+
 /// Extension trait for all reference-counted classes.
 pub trait NewGd: GodotClass {
     /// Return a new, ref-counted `Gd` containing a default-constructed instance.
@@ -472,6 +506,7 @@ where
 pub mod cap {
     use super::*;
     use crate::builtin::{StringName, Variant};
+    use crate::meta::PropertyInfo;
     use crate::obj::{Base, Bounds, Gd};
     use std::any::Any;
 
@@ -571,6 +606,13 @@ pub mod cap {
         fn __godot_property_get_revert(&self, property: StringName) -> Option<Variant>;
     }
 
+    #[doc(hidden)]
+    #[cfg(since_api = "4.2")]
+    pub trait GodotValidateProperty: GodotClass {
+        #[doc(hidden)]
+        fn __godot_validate_property(&self, property: &mut PropertyInfo);
+    }
+
     /// Auto-implemented for `#[godot_api] impl MyClass` blocks
     pub trait ImplementsGodotApi: GodotClass {
         #[doc(hidden)]
@@ -588,10 +630,15 @@ pub mod cap {
 
     /// Auto-implemented for `#[godot_api] impl XyVirtual for MyClass` blocks
     pub trait ImplementsGodotVirtual: GodotClass {
+        // Cannot use #[cfg(since_api = "4.4")] on the `hash` parameter, because the doc-postprocessing generates #[doc(cfg)],
+        // which isn't valid in parameter position.
+
+        #[cfg(before_api = "4.4")]
         #[doc(hidden)]
-        fn __virtual_call(
-            name: &str,
-            #[cfg(since_api = "4.4")] hash: u32,
-        ) -> sys::GDExtensionClassCallVirtual;
+        fn __virtual_call(name: &str) -> sys::GDExtensionClassCallVirtual;
+
+        #[cfg(since_api = "4.4")]
+        #[doc(hidden)]
+        fn __virtual_call(name: &str, hash: u32) -> sys::GDExtensionClassCallVirtual;
     }
 }

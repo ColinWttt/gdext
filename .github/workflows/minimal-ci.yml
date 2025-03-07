@@ -96,6 +96,7 @@ jobs:
           components: clippy
 
       - name: "Check clippy"
+        # TODO(Rust 1.86): remove -A clippy::precedence; see https://github.com/godot-rust/gdext/pull/1055.
         run: |
           cargo clippy --all-targets $CLIPPY_FEATURES -- \
           -D clippy::suspicious \
@@ -105,7 +106,8 @@ jobs:
           -D clippy::dbg_macro \
           -D clippy::todo \
           -D clippy::unimplemented \
-          -D warnings
+          -D warnings \
+          -A clippy::precedence
           
 
   unit-test:
@@ -169,17 +171,29 @@ jobs:
 
           # Linux compat
 
-          - name: linux-4.1
+          - name: linux-4.4
             os: ubuntu-22.04
-            artifact-name: linux-4.1
+            artifact-name: linux-4.4
             godot-binary: godot.linuxbsd.editor.dev.x86_64
-            godot-prebuilt-patch: '4.1.4'
+            godot-prebuilt-patch: '4.4'
+
+          - name: linux-4.3
+            os: ubuntu-22.04
+            artifact-name: linux-4.3
+            godot-binary: godot.linuxbsd.editor.dev.x86_64
+            godot-prebuilt-patch: '4.3'
 
           - name: linux-4.2
             os: ubuntu-22.04
             artifact-name: linux-4.2
             godot-binary: godot.linuxbsd.editor.dev.x86_64
             godot-prebuilt-patch: '4.2.2'
+
+          - name: linux-4.1
+            os: ubuntu-22.04
+            artifact-name: linux-4.1
+            godot-binary: godot.linuxbsd.editor.dev.x86_64
+            godot-prebuilt-patch: '4.1.4'
 
           # Memory checkers
 
@@ -231,7 +245,7 @@ jobs:
       - name: "Install Godot"
         uses: ./.github/composite/godot-install
         with:
-          artifact-name: godot-linux-4.3
+          artifact-name: godot-linux-4.4
           godot-binary: godot.linuxbsd.editor.dev.x86_64
 
       - name: "Run examples for short time"

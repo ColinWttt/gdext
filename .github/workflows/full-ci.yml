@@ -85,6 +85,7 @@ jobs:
         RUSTDOCFLAGS: >
           -D rustdoc::broken-intra-doc-links -D rustdoc::private-intra-doc-links -D rustdoc::invalid-codeblock-attributes 
           -D rustdoc::invalid-rust-codeblocks -D rustdoc::invalid-html-tags -D rustdoc::bare-urls -D rustdoc::unescaped-backticks
+          -D warnings
       run: cargo doc -p godot --ignore-rust-version
 
 
@@ -103,6 +104,7 @@ jobs:
 
       # Note: could use `-- --no-deps` to not lint dependencies, however it doesn't really speed up and also skips deps in workspace.
       - name: "Check clippy"
+        # TODO(Rust 1.86): remove -A clippy::precedence; see https://github.com/godot-rust/gdext/pull/1055.
         run: |
           cargo clippy --all-targets $CLIPPY_FEATURES -- \
           -D clippy::suspicious \
@@ -112,7 +114,8 @@ jobs:
           -D clippy::dbg_macro \
           -D clippy::todo \
           -D clippy::unimplemented \
-          -D warnings
+          -D warnings \
+          -A clippy::precedence
 
   unit-test:
     name: unit-test (${{ matrix.name }}${{ matrix.rust-special }})
@@ -253,11 +256,11 @@ jobs:
             godot-binary: godot.macos.editor.dev.double.x86_64
             rust-extra-args: --features godot/api-custom,godot/double-precision
 
-          - name: macos-x86-4.2
+          - name: macos-x86-4.3
             os: macos-13
-            artifact-name: macos-x86-4.2
+            artifact-name: macos-x86-4.3
             godot-binary: godot.macos.editor.dev.x86_64
-            godot-prebuilt-patch: '4.2.2'
+            godot-prebuilt-patch: '4.3'
 
           - name: macos-arm
             os: macos-latest
@@ -272,11 +275,11 @@ jobs:
 #            godot-binary: godot.macos.editor.dev.double.arm64
 #            rust-extra-args: --features godot/api-custom,godot/double-precision
 
-          - name: macos-arm-4.2
+          - name: macos-arm-4.3
             os: macos-latest
-            artifact-name: macos-arm-4.2
+            artifact-name: macos-arm-4.3
             godot-binary: godot.macos.editor.dev.arm64
-            godot-prebuilt-patch: '4.2.2'
+            godot-prebuilt-patch: '4.3'
 
           # Windows
 
@@ -292,11 +295,11 @@ jobs:
             godot-binary: godot.windows.editor.dev.double.x86_64.exe
             rust-extra-args: --features godot/api-custom,godot/double-precision
 
-          - name: windows-4.2
+          - name: windows-4.3
             os: windows-latest
-            artifact-name: windows-4.2
+            artifact-name: windows-4.3
             godot-binary: godot.windows.editor.dev.x86_64.exe
-            godot-prebuilt-patch: '4.2.2'
+            godot-prebuilt-patch: '4.3'
 
 #          - name: windows-4.1
 #            os: windows-latest
@@ -340,11 +343,17 @@ jobs:
 
           # Linux compat (4.1 disabled, already covered by memcheck)
 
+          - name: linux-4.4
+            os: ubuntu-22.04
+            artifact-name: linux-4.4
+            godot-binary: godot.linuxbsd.editor.dev.x86_64
+            godot-prebuilt-patch: '4.4'
+
           - name: linux-4.3
             os: ubuntu-22.04
             artifact-name: linux-4.3
             godot-binary: godot.linuxbsd.editor.dev.x86_64
-            #godot-prebuilt-patch: '4.3.x'
+            godot-prebuilt-patch: '4.3'
 
           - name: linux-4.2
             os: ubuntu-22.04
@@ -420,7 +429,7 @@ jobs:
       - name: "Install Godot"
         uses: ./.github/composite/godot-install
         with:
-          artifact-name: godot-linux-4.3
+          artifact-name: godot-linux-4.4
           godot-binary: godot.linuxbsd.editor.dev.x86_64
 
       - name: "Run examples for short time"

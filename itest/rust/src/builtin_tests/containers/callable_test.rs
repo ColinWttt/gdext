@@ -7,7 +7,8 @@
 
 use crate::framework::itest;
 use godot::builtin::{
-    array, varray, Array, Callable, GString, NodePath, StringName, Variant, VariantArray, Vector2,
+    array, dict, varray, Array, Callable, Color, GString, NodePath, StringName, Variant,
+    VariantArray, Vector2,
 };
 use godot::classes::{Node2D, Object, RefCounted};
 use godot::init::GdextBuild;
@@ -98,27 +99,52 @@ fn callable_object_method() {
 }
 
 #[itest]
+#[cfg(since_api = "4.3")]
+fn callable_variant_method() {
+    // Dictionary
+    let dict = dict! { "one": 1, "value": 2 };
+    let dict_get = Callable::from_variant_method(&dict.to_variant(), "get");
+    assert_eq!(dict_get.call(&["one".to_variant()]), 1.to_variant());
+
+    // GString
+    let string = GString::from("some string").to_variant();
+    let string_md5 = Callable::from_variant_method(&string, "md5_text");
+    assert_eq!(
+        string_md5.call(&[]),
+        "5ac749fbeec93607fc28d666be85e73a".to_variant()
+    );
+
+    // Object
+    let obj = CallableTestObj::new_gd().to_variant();
+    let obj_stringify = Callable::from_variant_method(&obj, "stringify_int");
+    assert_eq!(obj_stringify.call(&[10.to_variant()]), "10".to_variant());
+
+    // Vector3
+    let vector = Vector2::new(-1.2, 2.5).to_variant();
+    let vector_round = Callable::from_variant_method(&vector, "round");
+    assert_eq!(vector_round.call(&[]), Vector2::new(-1.0, 3.0).to_variant());
+
+    // Color
+    let color = Color::from_rgba8(255, 0, 127, 255).to_variant();
+    let color_to_html = Callable::from_variant_method(&color, "to_html");
+    assert_eq!(color_to_html.call(&[]), "ff007fff".to_variant());
+
+    // Color - invalid method.
+    let color = Color::from_rgba8(255, 0, 127, 255).to_variant();
+    let color_to_html = Callable::from_variant_method(&color, "to_htmI");
+    assert!(!color_to_html.is_valid());
+}
+
+#[itest]
+#[cfg(since_api = "4.4")]
 fn callable_static() {
     let callable = Callable::from_local_static("CallableTestObj", "concat_array");
 
-    // Test current behavior in <4.4 and >=4.4. Although our API explicitly leaves it unspecified, we then notice change in implementation.
-    if cfg!(since_api = "4.4") {
-        assert_eq!(callable.object(), None);
-        assert_eq!(callable.object_id(), None);
-        assert_eq!(callable.method_name(), None);
-        assert!(callable.is_custom());
-        assert!(callable.is_valid());
-    } else {
-        assert!(callable.object().is_some());
-        assert!(callable.object_id().is_some());
-        assert_eq!(callable.method_name(), Some("concat_array".into()));
-        assert_eq!(callable.to_string(), "GDScriptNativeClass::concat_array");
-        assert!(!callable.is_custom());
-
-        // Surprisingly false, but call still works (see test below).
-        // What DOESN'T work is connecting 4.3 static methods to signals via this approach.
-        assert!(!callable.is_valid());
-    }
+    assert_eq!(callable.object(), None);
+    assert_eq!(callable.object_id(), None);
+    assert_eq!(callable.method_name(), None);
+    assert!(callable.is_custom());
+    assert!(callable.is_valid());
 
     assert!(!callable.is_null());
 
@@ -136,6 +162,32 @@ fn callable_static() {
 
     #[cfg(since_api = "4.3")]
     assert_eq!(callable.get_argument_count(), 0); // Consistently doesn't work :)
+}
+
+// Regression test, see https://github.com/godot-rust/gdext/pull/1029.
+#[itest]
+#[cfg(since_api = "4.4")]
+fn callable_static_bind() {
+    let callable = Callable::from_local_static("CallableTestObj", "concat_array");
+    assert!(callable.is_valid());
+
+    // Test varying binds to static callables.
+    // Last 3 of 4 arguments. Within Godot, bound arguments are used in-order AFTER call arguments.
+    let bindv = callable.bindv(&varray![
+        "two",
+        array![&NodePath::from("three/four")],
+        &RefCounted::new_gd(),
+    ]);
+    assert!(bindv.is_valid());
+
+    assert!(!bindv.to_variant().is_nil());
+    let args = varray![1];
+    let bindv_result = bindv.callv(&args);
+
+    assert!(!bindv_result.is_nil());
+
+    let bind_result_data: VariantArray = bindv_result.to();
+    assert_eq!(4, bind_result_data.len());
 }
 
 #[itest]
