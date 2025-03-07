@@ -160,7 +160,7 @@ compile_error!("The feature `double-precision` currently requires `api-custom` d
 // Modules
 
 #[doc(inline)]
-pub use godot_core::{builtin, classes, global, meta, obj, tools};
+pub use godot_core::{builtin, classes, global, meta, obj, task, tools};
 
 #[doc(hidden)]
 pub use godot_core::possibly_docs as docs;
