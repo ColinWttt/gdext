@@ -455,10 +455,29 @@
  impl Wake for GodotWaker {
      fn wake(self: Arc<Self>) {
          let mut waker = Some(self);
-         let callable = Callable::from_local_fn("GodotWaker::wake", move |_args| {
-             poll_future(waker.take().expect("Callable will never be called again"));
-             Ok(Variant::nil())
-         });
+ 
+         /// Enforce the passed closure is generic over its lifetime. The compiler gets confused about the livetime of the argument otherwise.
+         /// This appears to be a common issue: https://github.com/rust-lang/rust/issues/89976
+         fn callback_type_hint<F>(f: F) -> F
+         where
+             F: for<'a> FnMut(&'a [&Variant]) -> Result<Variant, ()>,
+         {
+             f
+         }
+ 
+         #[cfg(not(feature = "experimental-threads"))]
+         let create_callable = Callable::from_local_fn;
+ 
+         #[cfg(feature = "experimental-threads")]
+         let create_callable = Callable::from_sync_fn;
+ 
+         let callable = create_callable(
+             "GodotWaker::wake",
+             callback_type_hint(move |_args| {
+                 poll_future(waker.take().expect("Callable will never be called again"));
+                 Ok(Variant::nil())
+             }),
+         );
  
          // Schedule waker to poll the Future at the end of the frame.
          callable.call_deferred(&[]);
